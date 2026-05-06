@@ -28,10 +28,7 @@ services:
           - messaging
 
   gateway:
-    build:
-      context: .
-      dockerfile: demo/gateway.Dockerfile
-    image: agent-gateway-demo-gateway
+    image: ${AGENT_GATEWAY_DEMO_GATEWAY_IMAGE:-ghcr.io/sl5taskforce/agent-gateway:main}
     working_dir: /workspaces/agent_gateway
     command: --config config.toml
     environment:
@@ -39,7 +36,9 @@ services:
     ports:
       - "8443:8443"
     volumes:
-      - .:/workspaces/agent_gateway
+      - ./config.toml:/workspaces/agent_gateway/config.toml:ro
+      - ./certs/server.pem:/workspaces/agent_gateway/certs/server.pem:ro
+      - ./certs/server-key.pem:/workspaces/agent_gateway/certs/server-key.pem:ro
     depends_on:
       - postgres
       - mock-services

@@ -20,9 +20,11 @@ GATEWAY="${AGENT_GATEWAY_DEMO_GATEWAY:-127.0.0.1:8443}"
 GATEWAY_CA="${AGENT_GATEWAY_DEMO_GATEWAY_CA:-$REPO_ROOT/certs/server-ca.pem}"
 MOCK_CA="${AGENT_GATEWAY_DEMO_MOCK_CA:-$REPO_ROOT/certs/mock-ca.pem}"
 SIDECAR_BIN="$REPO_ROOT/target/debug/agent_gateway_sidecar"
+GATEWAY_IMAGE="${AGENT_GATEWAY_DEMO_GATEWAY_IMAGE:-ghcr.io/sl5taskforce/agent-gateway:main}"
 VERIFY_TIMEOUT_SECONDS="${AGENT_GATEWAY_DEMO_VERIFY_TIMEOUT_SECONDS:-120}"
 
 export COMPOSE_PROJECT_NAME
+export AGENT_GATEWAY_DEMO_GATEWAY_IMAGE="$GATEWAY_IMAGE"
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -144,8 +146,7 @@ fi
 echo "==> Building local sidecar"
 cargo build -p agent_gateway_sidecar
 
-echo "==> Building gateway image"
-compose build gateway
+echo "==> Using gateway image $GATEWAY_IMAGE"
 
 echo "==> Starting Postgres and mock HTTPS services"
 compose up -d --force-recreate postgres mock-services

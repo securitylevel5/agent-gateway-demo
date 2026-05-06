@@ -1,13 +1,13 @@
-# agent_gateway
+# agent_gateway demo
 
-An mTLS HTTP/2 CONNECT proxy that authorizes connections based on custom X.509 certificate extensions.
+Demo and support tooling for an mTLS HTTP/2 CONNECT proxy that authorizes connections based on custom X.509 certificate extensions.
 
 The proxy accepts incoming mTLS connections, extracts a custom extension value from the client certificate, and checks a PostgreSQL-backed signed permission registry to decide whether the client may connect to the requested destination. If allowed, it opens a raw TCP connection to the destination and tunnels data bidirectionally. The client is responsible for establishing its own TLS session to the destination through the tunnel.
 
 ## Building
 
 ```
-cargo build --release
+cargo build -p agent_gateway_sidecar
 ```
 
 The sidecar uses a simulated TPM identity. Install the native TPM stack before
@@ -20,12 +20,13 @@ sudo apt-get install libtss2-dev swtpm tpm2-tools pkg-config
 ## Quick start
 
 ```bash
+export AGENT_GATEWAY_DEMO_GATEWAY_IMAGE=ghcr.io/sl5taskforce/agent-gateway:main
 ./demo/setup.sh
 ```
 
 The setup script generates demo TLS material, creates `config.toml` when needed,
 starts Postgres and static HTTPS mock services with Podman Compose or Docker Compose, applies the
-database migration, builds and starts the gateway, enrolls a demo principal,
+database migration, starts the configured gateway image, enrolls a demo principal,
 grants access to `docstore` and `messaging`, creates a demo agent handle, and
 verifies that Claude Code can fetch `https://docstore/health` through the
 gateway.

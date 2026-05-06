@@ -288,6 +288,7 @@ async fn handle(
                     dest_authority = %authority,
                     gateway_endpoint = %connector.gateway_endpoint(),
                     error = %e,
+                    error_chain = %format_args!("{e:#}"),
                     "gateway connect failed"
                 );
                 return response(StatusCode::BAD_GATEWAY, "gateway unreachable");
