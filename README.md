@@ -51,16 +51,26 @@ After setup, prompt the demo agent:
   --prompt "Access https://docstore/documents using curl"
 ```
 
-On later runs, start the gateway first and use `./demo/demo-agent.sh prompt`. `./demo/connect.sh` prepares `machine-client.pem` for the current simulated TPM key and identity extension whenever it prepares or starts the sidecar. `--regenerate-certs` creates a fresh simulated TPM state; any permissions for the old subject key will no longer match.
+On later runs, start the gateway first and use `./demo/demo-agent.sh prompt`.
+`./demo/demo-agent.sh` prepares `machine-client.pem` for the current simulated
+TPM key and identity whenever it creates or restarts the local sidecar runtime.
+Delete the demo agent when finished; this stops the local sidecar and `swtpm`,
+revokes its database permissions, and removes local state:
 
-Pass a custom policy extension value: `./demo/connect.sh start-sidecar ... --extension-value agent-beta`. The extension value must match `permission_registry.subject_identity` in an active signed permission row.
+```bash
+./demo/demo-agent.sh delete agent-alpha
+```
+
+Pass a custom policy identity when creating an agent with
+`./demo/demo-agent.sh create --identity agent-beta ...`. The identity must match
+`permission_registry.subject_identity` in an active signed permission row.
 
 The simulated TPM state lives under `$AGENT_STATE/client/swtpm/`. By default,
 the sidecar uses TCTI `swtpm:host=127.0.0.1,port=2321` and persistent handle
-`0x81010004`; override the handle or simulator data port with
-`./demo/connect.sh start-sidecar --tpm-handle` and
-`--swtpm-port`. The swtpm control port is always the data port plus one, which
-matches the TSS swtpm TCTI convention.
+`0x81010004`; override the simulator data port with
+`AGENT_GATEWAY_DEMO_SWTPM_PORT` and the handle with
+`AGENT_GATEWAY_DEMO_TPM_HANDLE`. The swtpm control port is always the data port
+plus one, which matches the TSS swtpm TCTI convention.
 
 ## Configuration
 
@@ -143,6 +153,9 @@ AGENT_HANDLE="$(./demo/demo-agent.sh create \
 # Principal shell: send the first prompt through that agent.
 ./demo/demo-agent.sh prompt "$AGENT_HANDLE" \
   --prompt "Access https://docstore/documents with curl."
+
+# Principal shell: delete the agent when finished.
+./demo/demo-agent.sh delete "$AGENT_HANDLE"
 ```
 
 ## Authorization Registry
@@ -168,6 +181,10 @@ The authorization registry has three main tables:
 `principal_key_permissions.signing_key_id` and `permission_registry.signing_key_id` both reference `principal_signing_keys.key_id`. A permission is usable only when the permission row is active, the signing key is active, the signature verifies over the canonical row fields, and the signing key has a matching destination delegation row.
 
 The signed bytes are the following UTF-8 text, with fields in this exact order and timestamps formatted as UTC RFC 3339 with six fractional digits:
+
+`./registry-cli/agent-permissions.sh grant` inserts signed agent permission rows,
+and `./registry-cli/agent-permissions.sh delete` revokes rows for an agent
+identity and subject public key.
 
 ```text
 agent-gateway-permission-v1

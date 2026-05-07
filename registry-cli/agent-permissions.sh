@@ -2,8 +2,10 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 SIGNING_KEY_ID SUBJECT_IDENTITY SUBJECT_PUBLIC_KEY_SPKI_DER DESTINATION [VALID_DAYS] [PERMISSION_ID]" >&2
-  echo "Example: $0 org-alice agent-alpha ./machine-client-spki.der api.anthropic.com 30" >&2
+  echo "Usage:" >&2
+  echo "  $0 grant SIGNING_KEY_ID SUBJECT_IDENTITY SUBJECT_PUBLIC_KEY_SPKI_DER DESTINATION [VALID_DAYS] [PERMISSION_ID]" >&2
+  echo "  $0 delete SUBJECT_IDENTITY SUBJECT_PUBLIC_KEY_SPKI_DER" >&2
+  echo "Example: $0 grant org-alice agent-alpha ./machine-client-spki.der api.anthropic.com 30" >&2
   echo "SUBJECT_PUBLIC_KEY_SPKI_DER may be a DER file path or lowercase/uppercase hex." >&2
   echo >&2
   echo "Environment:" >&2
@@ -19,45 +21,29 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 4 || $# -gt 6 ]]; then
+if [[ $# -lt 1 ]]; then
   usage
   exit 2
 fi
 
-SIGNING_KEY_ID="$1"
-SUBJECT_IDENTITY="$2"
-SUBJECT_PUBLIC_KEY_SPKI_DER="$3"
-DESTINATION="$4"
-VALID_DAYS="${5:-30}"
+COMMAND="$1"
+shift
 DATABASE_URL="${AGENT_GATEWAY_DATABASE_URL:-${DATABASE_URL:-}}"
 TPM2_PKCS11_STORE="${TPM2_PKCS11_STORE:-$HOME/.tpm2_pkcs11}"
 TOKEN_LABEL="${AGENT_GATEWAY_TPM_TOKEN_LABEL:-agent-gateway}"
 USER_PIN="${AGENT_GATEWAY_TPM_USER_PIN:-}"
 export TPM2_PKCS11_STORE
 
-if [[ -n "${6:-}" ]]; then
-  PERMISSION_ID="$6"
-else
-  PERMISSION_ID="perm-${SIGNING_KEY_ID}-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
-fi
+require_database() {
+  if [[ -z "$DATABASE_URL" ]]; then
+    echo "Set AGENT_GATEWAY_DATABASE_URL or DATABASE_URL" >&2
+    exit 2
+  fi
+}
 
-if [[ -z "$DATABASE_URL" ]]; then
-  echo "Set AGENT_GATEWAY_DATABASE_URL or DATABASE_URL" >&2
-  exit 2
-fi
-
-command -v pkcs11-tool >/dev/null || { echo "pkcs11-tool is required" >&2; exit 1; }
-command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
-command -v psql >/dev/null || { echo "psql is required" >&2; exit 1; }
-command -v od >/dev/null || { echo "od is required" >&2; exit 1; }
-
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
-
-canonical_file="$tmpdir/canonical.txt"
-digest_file="$tmpdir/canonical.sha256"
-signature_raw="$tmpdir/signature.raw"
-signature_der="$tmpdir/signature.der"
+require_cmd() {
+  command -v "$1" >/dev/null || { echo "$1 is required" >&2; exit 1; }
+}
 
 discover_pkcs11_module() {
   if [[ -n "${TPM2_PKCS11_MODULE:-}" ]]; then
@@ -289,20 +275,51 @@ sign_permission() {
   return 1
 }
 
-PKCS11_MODULE="$(discover_pkcs11_module)"
-if [[ -z "$USER_PIN" ]]; then
-  USER_PIN="$(prompt_secret "TPM token user PIN: ")"
-fi
+cmd_grant() {
+  if [[ $# -lt 4 || $# -gt 6 ]]; then
+    usage
+    exit 2
+  fi
 
-NORMALIZED_DESTINATION="$(normalize_destination "$DESTINATION")"
-SUBJECT_PUBLIC_KEY_SPKI_HEX="$(subject_spki_hex "$SUBJECT_PUBLIC_KEY_SPKI_DER")"
-timestamp_row="$(
-  psql "$DATABASE_URL" \
-    --set=ON_ERROR_STOP=1 \
-    --set=valid_days="$VALID_DAYS" \
-    --no-align \
-    --tuples-only \
-    --field-separator='|' <<'SQL'
+  SIGNING_KEY_ID="$1"
+  SUBJECT_IDENTITY="$2"
+  SUBJECT_PUBLIC_KEY_SPKI_DER="$3"
+  DESTINATION="$4"
+  VALID_DAYS="${5:-30}"
+
+  require_database
+  require_cmd pkcs11-tool
+  require_cmd openssl
+  require_cmd psql
+  require_cmd od
+
+  if [[ -n "${6:-}" ]]; then
+    PERMISSION_ID="$6"
+  else
+    PERMISSION_ID="perm-${SIGNING_KEY_ID}-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+  fi
+
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+  canonical_file="$tmpdir/canonical.txt"
+  digest_file="$tmpdir/canonical.sha256"
+  signature_raw="$tmpdir/signature.raw"
+  signature_der="$tmpdir/signature.der"
+
+  PKCS11_MODULE="$(discover_pkcs11_module)"
+  if [[ -z "$USER_PIN" ]]; then
+    USER_PIN="$(prompt_secret "TPM token user PIN: ")"
+  fi
+
+  NORMALIZED_DESTINATION="$(normalize_destination "$DESTINATION")"
+  SUBJECT_PUBLIC_KEY_SPKI_HEX="$(subject_spki_hex "$SUBJECT_PUBLIC_KEY_SPKI_DER")"
+  timestamp_row="$(
+    psql "$DATABASE_URL" \
+      --set=ON_ERROR_STOP=1 \
+      --set=valid_days="$VALID_DAYS" \
+      --no-align \
+      --tuples-only \
+      --field-separator='|' <<'SQL'
 WITH bounds AS (
   SELECT now() AS not_before, now() + make_interval(days => :'valid_days'::int) AS not_after
 )
@@ -311,10 +328,10 @@ SELECT
   to_char(not_after AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
 FROM bounds;
 SQL
-)"
-IFS='|' read -r NOT_BEFORE NOT_AFTER <<< "$timestamp_row"
+  )"
+  IFS='|' read -r NOT_BEFORE NOT_AFTER <<< "$timestamp_row"
 
-cat > "$canonical_file" <<EOF
+  cat > "$canonical_file" <<EOF
 agent-gateway-permission-v1
 permission_id=$PERMISSION_ID
 signing_key_id=$SIGNING_KEY_ID
@@ -325,20 +342,20 @@ not_before=$NOT_BEFORE
 not_after=$NOT_AFTER
 EOF
 
-openssl dgst -sha256 -binary "$canonical_file" > "$digest_file"
-sign_permission
-SIGNATURE_HEX="$(hex_file "$signature_der")"
+  openssl dgst -sha256 -binary "$canonical_file" > "$digest_file"
+  sign_permission
+  SIGNATURE_HEX="$(hex_file "$signature_der")"
 
-psql "$DATABASE_URL" \
-  --set=ON_ERROR_STOP=1 \
-  --set=permission_id="$PERMISSION_ID" \
-  --set=signing_key_id="$SIGNING_KEY_ID" \
-  --set=subject_identity="$SUBJECT_IDENTITY" \
-  --set=subject_public_key_spki_der="$SUBJECT_PUBLIC_KEY_SPKI_HEX" \
-  --set=destination="$NORMALIZED_DESTINATION" \
-  --set=not_before="$NOT_BEFORE" \
-  --set=not_after="$NOT_AFTER" \
-  --set=signature="$SIGNATURE_HEX" <<'SQL'
+  psql "$DATABASE_URL" \
+    --set=ON_ERROR_STOP=1 \
+    --set=permission_id="$PERMISSION_ID" \
+    --set=signing_key_id="$SIGNING_KEY_ID" \
+    --set=subject_identity="$SUBJECT_IDENTITY" \
+    --set=subject_public_key_spki_der="$SUBJECT_PUBLIC_KEY_SPKI_HEX" \
+    --set=destination="$NORMALIZED_DESTINATION" \
+    --set=not_before="$NOT_BEFORE" \
+    --set=not_after="$NOT_AFTER" \
+    --set=signature="$SIGNATURE_HEX" <<'SQL'
 INSERT INTO permission_registry (
   permission_id, signing_key_id, subject_identity, subject_public_key_spki_der, destination,
   not_before, not_after, revoked_at, signature
@@ -366,3 +383,40 @@ ON CONFLICT (permission_id) DO UPDATE SET
   updated_at = now()
 RETURNING permission_id, signing_key_id, subject_identity, destination, not_after;
 SQL
+}
+
+cmd_delete() {
+  if [[ $# -ne 2 ]]; then
+    usage
+    exit 2
+  fi
+
+  SUBJECT_IDENTITY="$1"
+  SUBJECT_PUBLIC_KEY_SPKI_DER="$2"
+
+  require_database
+  require_cmd psql
+  require_cmd od
+
+  SUBJECT_PUBLIC_KEY_SPKI_HEX="$(subject_spki_hex "$SUBJECT_PUBLIC_KEY_SPKI_DER")"
+  psql "$DATABASE_URL" \
+    --set=ON_ERROR_STOP=1 \
+    --set=subject_identity="$SUBJECT_IDENTITY" \
+    --set=subject_public_key_spki_der="$SUBJECT_PUBLIC_KEY_SPKI_HEX" <<'SQL'
+UPDATE permission_registry
+SET
+  revoked_at = now(),
+  updated_at = now()
+WHERE subject_identity = :'subject_identity'
+  AND subject_public_key_spki_der = decode(:'subject_public_key_spki_der', 'hex')
+  AND revoked_at IS NULL
+RETURNING permission_id, signing_key_id, subject_identity, destination, revoked_at;
+SQL
+}
+
+case "$COMMAND" in
+  grant) cmd_grant "$@" ;;
+  delete) cmd_delete "$@" ;;
+  -h|--help) usage ;;
+  *) echo "Unknown command: $COMMAND" >&2; usage; exit 2 ;;
+esac

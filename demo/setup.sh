@@ -208,6 +208,9 @@ Mock service URLs available through the gateway:
 Prompt the demo agent with:
   ./demo/demo-agent.sh prompt "$HANDLE" --prompt "Access https://docstore/documents using curl, then summarize what you found."
 
+Delete the demo agent when finished:
+  ./demo/demo-agent.sh delete "$HANDLE"
+
 Useful logs:
   $COMPOSE_DISPLAY -p "$COMPOSE_PROJECT_NAME" -f docker-compose.demo.yml logs -f gateway
   $(state_dir)/sidecar.log

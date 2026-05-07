@@ -108,13 +108,39 @@ async fn main() -> anyhow::Result<()> {
         result = serve_loop(&listener, connector) => {
             result?;
         }
-        _ = tokio::signal::ctrl_c() => {
-            info!("received shutdown signal");
+        result = shutdown_signal() => {
+            let signal = result?;
+            info!(signal, "received shutdown signal");
         }
     }
 
     observability::shutdown();
     Ok(())
+}
+
+async fn shutdown_signal() -> anyhow::Result<&'static str> {
+    let interrupt = async {
+        tokio::signal::ctrl_c()
+            .await
+            .context("installing Ctrl-C signal handler")?;
+        Ok("SIGINT")
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("installing SIGTERM signal handler")?;
+        signal.recv().await;
+        Ok("SIGTERM")
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<anyhow::Result<&'static str>>();
+
+    tokio::select! {
+        result = interrupt => result,
+        result = terminate => result,
+    }
 }
 
 async fn serve_loop(
