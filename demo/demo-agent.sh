@@ -584,7 +584,7 @@ cmd_prompt() {
   ensure_runtime "$dir"
   [[ -f "$DEFAULT_MOCK_CA" ]] || {
     echo "error: mock service CA file not found: $DEFAULT_MOCK_CA" >&2
-    echo "hint: run ./demo/generate-server-certs.sh or ./demo/setup.sh first" >&2
+    echo "hint: run ./demo/generate-server-certs.sh or ./demo/demo.sh setup first" >&2
     exit 1
   }
   export NODE_EXTRA_CA_CERTS="$DEFAULT_MOCK_CA"

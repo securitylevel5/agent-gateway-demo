@@ -26,6 +26,18 @@ VERIFY_TIMEOUT_SECONDS="${AGENT_GATEWAY_DEMO_VERIFY_TIMEOUT_SECONDS:-120}"
 export COMPOSE_PROJECT_NAME
 export AGENT_GATEWAY_DEMO_GATEWAY_IMAGE="$GATEWAY_IMAGE"
 
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  demo.sh setup
+  demo.sh teardown
+
+Commands:
+  setup     Start and verify the full local demo.
+  teardown  Delete demo agents, state, generated files, containers, and volumes.
+EOF
+}
+
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "error: required command not found: $1" >&2
@@ -127,54 +139,55 @@ demo_env=(
   "TPM2_PKCS11_STORE=$TPM2_PKCS11_STORE"
 )
 
-select_compose
-require_cmd cargo
-require_cmd openssl
-require_cmd psql
-require_cmd timeout
+cmd_setup() {
+  select_compose
+  require_cmd cargo
+  require_cmd openssl
+  require_cmd psql
+  require_cmd timeout
 
-cd "$REPO_ROOT"
+  cd "$REPO_ROOT"
 
-echo "==> Generating demo TLS certificates"
-"$SCRIPT_DIR/generate-server-certs.sh"
+  echo "==> Generating demo TLS certificates"
+  "$SCRIPT_DIR/generate-server-certs.sh"
 
-if [[ ! -f "$REPO_ROOT/config.toml" ]]; then
-  echo "==> Creating config.toml from config.example.toml"
-  cp "$REPO_ROOT/config.example.toml" "$REPO_ROOT/config.toml"
-fi
+  if [[ ! -f "$REPO_ROOT/config.toml" ]]; then
+    echo "==> Creating config.toml from config.example.toml"
+    cp "$REPO_ROOT/config.example.toml" "$REPO_ROOT/config.toml"
+  fi
 
-echo "==> Building local sidecar"
-cargo build -p agent_gateway_sidecar
+  echo "==> Building local sidecar"
+  cargo build -p agent_gateway_sidecar
 
-echo "==> Using gateway image $GATEWAY_IMAGE"
+  echo "==> Using gateway image $GATEWAY_IMAGE"
 
-echo "==> Starting Postgres and mock HTTPS services"
-compose up -d --force-recreate postgres mock-services
-wait_for_postgres
-apply_migrations
+  echo "==> Starting Postgres and mock HTTPS services"
+  compose up -d --force-recreate postgres mock-services
+  wait_for_postgres
+  apply_migrations
 
-echo "==> Starting gateway"
-compose up -d --force-recreate gateway otel-collector dashboard
+  echo "==> Starting gateway"
+  compose up -d --force-recreate gateway otel-collector dashboard
 
-echo "==> Registering demo principal $PRINCIPAL"
-env "${demo_env[@]}" "$REPO_ROOT/registry-cli/register-principal-key.sh" "$PRINCIPAL"
+  echo "==> Registering demo principal $PRINCIPAL"
+  env "${demo_env[@]}" "$REPO_ROOT/registry-cli/register-principal-key.sh" "$PRINCIPAL"
 
-echo "==> Granting demo scopes"
-env "${demo_env[@]}" "$REPO_ROOT/registry-cli/grant-principal-scope.sh" "$PRINCIPAL" docstore messaging api.anthropic.com
+  echo "==> Granting demo scopes"
+  env "${demo_env[@]}" "$REPO_ROOT/registry-cli/grant-principal-scope.sh" "$PRINCIPAL" docstore messaging api.anthropic.com
 
-echo "==> Creating demo agent $HANDLE"
-env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" create \
-  --identity "$IDENTITY" \
-  --handle "$HANDLE" \
-  --grant docstore \
-  --grant api.anthropic.com \
-  --grant messaging >/dev/null
+  echo "==> Creating demo agent $HANDLE"
+  env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" create \
+    --identity "$IDENTITY" \
+    --handle "$HANDLE" \
+    --grant docstore \
+    --grant api.anthropic.com \
+    --grant messaging >/dev/null
 
-echo "==> Verifying Claude Code HTTP requests through the gateway"
-if ! timeout "$VERIFY_TIMEOUT_SECONDS" env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" prompt "$HANDLE" --prompt \
-  "Access https://docstore/health using curl and return only the raw response body.
+  echo "==> Verifying Claude Code HTTP requests through the gateway"
+  if ! timeout "$VERIFY_TIMEOUT_SECONDS" env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" prompt "$HANDLE" --prompt \
+    "Access https://docstore/health using curl and return only the raw response body.
 Return only the raw response body."; then
-  cat >&2 <<EOF
+    cat >&2 <<EOF
 error: Claude Code could not fetch https://docstore/health through the demo gateway.
 
 Expected environment:
@@ -186,13 +199,13 @@ Expected environment:
   AGENT_GATEWAY_DEMO_SIDECAR_BIN=$SIDECAR_BIN
 
 EOF
-  print_verification_diagnostics
-  exit 1
-fi
+    print_verification_diagnostics
+    exit 1
+  fi
 
-rm -f "$(state_dir)/claude_started"
+  rm -f "$(state_dir)/claude_started"
 
-cat <<EOF
+  cat <<EOF
 
 Demo is ready.
 
@@ -211,7 +224,52 @@ Prompt the demo agent with:
 Delete the demo agent when finished:
   ./demo/demo-agent.sh delete "$HANDLE"
 
+Reset the entire demo with:
+  ./demo/demo.sh teardown
+
 Useful logs:
   $COMPOSE_DISPLAY -p "$COMPOSE_PROJECT_NAME" -f docker-compose.demo.yml logs -f gateway
   $(state_dir)/sidecar.log
 EOF
+}
+
+delete_demo_agents() {
+  [[ -d "$STATE_ROOT" ]] || return
+
+  local dir handle
+  for dir in "$STATE_ROOT"/*; do
+    [[ -d "$dir" ]] || continue
+    [[ -f "$dir/identity" && -f "$dir/client/machine-client-spki.der" ]] || continue
+
+    handle="${dir##*/}"
+    echo "==> Deleting demo agent $handle"
+    if ! env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" delete "$handle"; then
+      echo "warning: failed to delete demo agent $handle; continuing teardown" >&2
+    fi
+  done
+}
+
+cmd_teardown() {
+  select_compose
+  cd "$REPO_ROOT"
+
+  delete_demo_agents
+
+  echo "==> Stopping compose services and deleting volumes"
+  compose down -v --remove-orphans
+
+  echo "==> Removing demo state and generated files"
+  rm -rf -- "$STATE_ROOT" "$REPO_ROOT/certs"
+  rm -f -- "$REPO_ROOT/config.toml"
+
+  echo "Demo teardown complete."
+}
+
+[[ $# -eq 1 ]] || { usage; exit 2; }
+
+case "$1" in
+  setup) cmd_setup ;;
+  teardown) cmd_teardown ;;
+  -h|--help) usage ;;
+  *) echo "Unknown command: $1" >&2; usage; exit 2 ;;
+esac

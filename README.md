@@ -21,10 +21,10 @@ sudo apt-get install libtss2-dev swtpm tpm2-tools pkg-config
 
 ```bash
 export AGENT_GATEWAY_DEMO_GATEWAY_IMAGE=ghcr.io/sl5taskforce/agent-gateway:main
-./demo/setup.sh
+./demo/demo.sh setup
 ```
 
-The setup script generates demo TLS material, creates `config.toml` when needed,
+The setup command generates demo TLS material, creates `config.toml` when needed,
 starts Postgres and static HTTPS mock services with Podman Compose or Docker Compose, applies the
 database migration, starts the configured gateway image, enrolls a demo principal,
 grants access to `docstore` and `messaging`, creates a demo agent handle, and
@@ -40,7 +40,7 @@ that public key and identity extension. The gateway does not trust a client CA
 bundle; it authorizes the exact subject public key recorded in signed Postgres
 permission rows.
 
-`demo/setup.sh` keeps its tpm2-pkcs11 state under the demo state directory by
+`demo/demo.sh setup` keeps its tpm2-pkcs11 state under the demo state directory by
 default. Override `AGENT_GATEWAY_DEMO_TPM2_PKCS11_STORE` only when you
 intentionally want the demo principal to use another store.
 
@@ -59,6 +59,13 @@ revokes its database permissions, and removes local state:
 
 ```bash
 ./demo/demo-agent.sh delete agent-alpha
+```
+
+Reset all demo services, volumes, generated certificates, `config.toml`, and
+local demo state with:
+
+```bash
+./demo/demo.sh teardown
 ```
 
 Pass a custom policy identity when creating an agent with
@@ -135,7 +142,7 @@ Register a principal signing key from the TPM owner machine with:
 
 The script creates or reuses a non-exportable TPM-backed P-256 key through `tpm2_ptool` and PKCS#11, stores only the public key in `principal_signing_keys`, and uses the friendly `key_id` (`org-alice`, `org-bob`, etc.) for the registry row. Run it on the machine that owns the TPM, with `AGENT_GATEWAY_DATABASE_URL` or `DATABASE_URL` pointing at Postgres.
 
-For a manual demo without `./demo/setup.sh`, use three windows:
+For a manual demo without `./demo/demo.sh setup`, use three windows:
 
 ```bash
 # Principal shell: enroll the principal TPM public key.
