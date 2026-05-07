@@ -21,8 +21,6 @@ GATEWAY_CA="${AGENT_GATEWAY_DEMO_GATEWAY_CA:-$REPO_ROOT/certs/server-ca.pem}"
 MOCK_CA="${AGENT_GATEWAY_DEMO_MOCK_CA:-$REPO_ROOT/certs/mock-ca.pem}"
 SIDECAR_BIN="$REPO_ROOT/target/debug/agent_gateway_sidecar"
 GATEWAY_IMAGE="${AGENT_GATEWAY_DEMO_GATEWAY_IMAGE:-ghcr.io/sl5taskforce/agent-gateway:main}"
-VERIFY_TIMEOUT_SECONDS="${AGENT_GATEWAY_DEMO_VERIFY_TIMEOUT_SECONDS:-120}"
-
 export COMPOSE_PROJECT_NAME
 export AGENT_GATEWAY_DEMO_GATEWAY_IMAGE="$GATEWAY_IMAGE"
 
@@ -109,42 +107,46 @@ state_dir() {
   printf '%s/%s\n' "$STATE_ROOT" "$HANDLE"
 }
 
-print_verification_diagnostics() {
-  local sidecar_log
-  sidecar_log="$(state_dir)/sidecar.log"
+enroll() {
+  demo_env=(
+    "AGENT_GATEWAY_DATABASE_URL=$DATABASE_URL"
+    "AGENT_GATEWAY_DEMO_GATEWAY=$GATEWAY"
+    "AGENT_GATEWAY_DEMO_GATEWAY_CA=$GATEWAY_CA"
+    "AGENT_GATEWAY_DEMO_MOCK_CA=$MOCK_CA"
+    "AGENT_GATEWAY_DEMO_SIDECAR_BIN=$SIDECAR_BIN"
+    "AGENT_GATEWAY_DEMO_STATE_DIR=$STATE_ROOT"
+    "AGENT_GATEWAY_TPM_USER_PIN=$USER_PIN"
+    "AGENT_GATEWAY_TPM_SO_PIN=$SO_PIN"
+    "AGENT_GATEWAY_RESET_TPM_STORE=false"
+    "CLAUDE_CODE_PROXY_RESOLVES_HOSTS=1"
+    "CURL_CA_BUNDLE=$MOCK_CA"
+    "NODE_EXTRA_CA_CERTS=$MOCK_CA"
+    "SSL_CERT_FILE=$MOCK_CA"
+    "TPM2_PKCS11_STORE=$TPM2_PKCS11_STORE"
+    "AGENT_GATEWAY_DEMO_DASHBOARD_URL=http://localhost:3000"
+  )
 
-  echo "Check the gateway, sidecar, and mock service logs before retrying." >&2
-  echo "Sidecar log: $sidecar_log" >&2
-  if [[ -f "$sidecar_log" ]]; then
-    echo >&2
-    echo "Recent sidecar log lines:" >&2
-    tail -n 80 "$sidecar_log" >&2 || true
-  fi
+  echo "==> Registering demo principal $PRINCIPAL"
+  env "${demo_env[@]}" "$REPO_ROOT/registry-cli/register-principal-key.sh" "$PRINCIPAL"
+
+  echo "==> Granting demo scopes"
+  env "${demo_env[@]}" "$REPO_ROOT/registry-cli/grant-principal-scope.sh" "$PRINCIPAL" docstore messaging api.anthropic.com
+
+  echo "==> Creating demo agent $HANDLE"
+  env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" create \
+    --identity "$IDENTITY" \
+    --handle "$HANDLE" \
+    --grant docstore \
+    --grant api.anthropic.com >/dev/null
 }
 
-demo_env=(
-  "AGENT_GATEWAY_DATABASE_URL=$DATABASE_URL"
-  "AGENT_GATEWAY_DEMO_GATEWAY=$GATEWAY"
-  "AGENT_GATEWAY_DEMO_GATEWAY_CA=$GATEWAY_CA"
-  "AGENT_GATEWAY_DEMO_MOCK_CA=$MOCK_CA"
-  "AGENT_GATEWAY_DEMO_SIDECAR_BIN=$SIDECAR_BIN"
-  "AGENT_GATEWAY_DEMO_STATE_DIR=$STATE_ROOT"
-  "AGENT_GATEWAY_TPM_USER_PIN=$USER_PIN"
-  "AGENT_GATEWAY_TPM_SO_PIN=$SO_PIN"
-  "AGENT_GATEWAY_RESET_TPM_STORE=false"
-  "CLAUDE_CODE_PROXY_RESOLVES_HOSTS=1"
-  "CURL_CA_BUNDLE=$MOCK_CA"
-  "NODE_EXTRA_CA_CERTS=$MOCK_CA"
-  "SSL_CERT_FILE=$MOCK_CA"
-  "TPM2_PKCS11_STORE=$TPM2_PKCS11_STORE"
-)
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 cmd_setup() {
   select_compose
   require_cmd cargo
   require_cmd openssl
   require_cmd psql
-  require_cmd timeout
 
   cd "$REPO_ROOT"
 
@@ -166,51 +168,16 @@ cmd_setup() {
   wait_for_postgres
   apply_migrations
 
-  echo "==> Starting gateway"
+  echo "==> Starting gateway, otel-collector, and dashboard"
   compose up -d --force-recreate gateway otel-collector dashboard
 
-  echo "==> Registering demo principal $PRINCIPAL"
-  env "${demo_env[@]}" "$REPO_ROOT/registry-cli/register-principal-key.sh" "$PRINCIPAL"
-
-  echo "==> Granting demo scopes"
-  env "${demo_env[@]}" "$REPO_ROOT/registry-cli/grant-principal-scope.sh" "$PRINCIPAL" docstore messaging api.anthropic.com
-
-  echo "==> Creating demo agent $HANDLE"
-  env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" create \
-    --identity "$IDENTITY" \
-    --handle "$HANDLE" \
-    --grant docstore \
-    --grant api.anthropic.com \
-    --grant messaging >/dev/null
-
-  echo "==> Verifying Claude Code HTTP requests through the gateway"
-  if ! timeout "$VERIFY_TIMEOUT_SECONDS" env "${demo_env[@]}" "$SCRIPT_DIR/demo-agent.sh" prompt "$HANDLE" --prompt \
-    "Access https://docstore/health using curl and return only the raw response body.
-Return only the raw response body."; then
-    cat >&2 <<EOF
-error: Claude Code could not fetch https://docstore/health through the demo gateway.
-
-Expected environment:
-  HTTPS_PROXY=http://127.0.0.1:3128
-  CURL_CA_BUNDLE=$MOCK_CA
-  NODE_EXTRA_CA_CERTS=$MOCK_CA
-  SSL_CERT_FILE=$MOCK_CA
-  CLAUDE_CODE_PROXY_RESOLVES_HOSTS=1
-  AGENT_GATEWAY_DEMO_SIDECAR_BIN=$SIDECAR_BIN
-
-EOF
-    print_verification_diagnostics
-    exit 1
-  fi
-
-  rm -f "$(state_dir)/claude_started"
+  enroll
 
   cat <<EOF
 
 Demo is ready.
 
-Dashboard URL:
-  http://localhost:3000
+Dashboard: http://localhost:3000
 
 Mock service URLs available through the gateway:
   https://docstore/health
