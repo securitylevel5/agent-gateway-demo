@@ -31,6 +31,7 @@ services:
     image: ${AGENT_GATEWAY_DEMO_GATEWAY_IMAGE:-ghcr.io/sl5taskforce/agent-gateway:main}
     working_dir: /workspaces/agent_gateway
     command: --config config.toml
+    stop_signal: SIGKILL
     environment:
       AGENT_GATEWAY_DATABASE_URL: postgres://agent_gateway_admin:agent_gateway_dev@postgres:5432/agent_gateway
     ports:
@@ -45,6 +46,7 @@ services:
   
   dashboard:
     image: ghcr.io/sl5taskforce/agent-gateway-dashboard:main
+    stop_signal: SIGKILL
     environment:
       AGENT_GATEWAY_DATABASE_URL: postgres://agent_gateway_admin:agent_gateway_dev@postgres:5432/agent_gateway
     ports:
