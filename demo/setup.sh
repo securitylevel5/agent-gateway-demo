@@ -154,7 +154,7 @@ wait_for_postgres
 apply_migrations
 
 echo "==> Starting gateway"
-compose up -d --force-recreate gateway
+compose up -d --force-recreate gateway otel-collector dashboard
 
 echo "==> Registering demo principal $PRINCIPAL"
 env "${demo_env[@]}" "$REPO_ROOT/registry-cli/register-principal-key.sh" "$PRINCIPAL"
@@ -195,6 +195,9 @@ rm -f "$(state_dir)/claude_started"
 cat <<EOF
 
 Demo is ready.
+
+Dashboard URL:
+  http://localhost:3000
 
 Mock service URLs available through the gateway:
   https://docstore/health
