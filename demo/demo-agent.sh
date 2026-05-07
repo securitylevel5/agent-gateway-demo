@@ -17,6 +17,7 @@ SWTPM_HOST="127.0.0.1"
 TPM2_PKCS11_STORE="${TPM2_PKCS11_STORE:-$HOME/.tpm2_pkcs11}"
 TOKEN_LABEL="${AGENT_GATEWAY_TPM_TOKEN_LABEL:-agent-gateway}"
 USER_PIN="${AGENT_GATEWAY_TPM_USER_PIN:-}"
+DASHBOARD_URL="${AGENT_GATEWAY_DEMO_DASHBOARD_URL:-http://localhost:3000}"
 export TPM2_PKCS11_STORE
 
 usage() {
@@ -549,6 +550,11 @@ cmd_create() {
   grant_permissions
   start_sidecar "$dir"
 
+  curl -sf --max-time 2 -X POST "$DASHBOARD_URL/api/events" \
+    -H 'Content-Type: application/json' \
+    -d "{\"event_type\":\"agent.created\",\"source\":\"agent-platform\",\"attributes\":{\"user.id\":\"$PRINCIPAL\",\"agent.id\":\"$IDENTITY\"}}" \
+    >/dev/null || true
+
   echo "$HANDLE"
 }
 
@@ -592,6 +598,10 @@ cmd_prompt() {
   done
 
   [[ -n "$PROMPT" ]] || { echo "error: prompt requires --prompt" >&2; exit 2; }
+  curl -sf --max-time 2 -X POST "$DASHBOARD_URL/api/events" \
+    -H 'Content-Type: application/json' \
+    -d "{\"event_type\":\"agent.prompted\",\"source\":\"agent-platform\",\"attributes\":{\"user.id\":\"$PRINCIPAL\",\"agent.id\":\"$IDENTITY\"}}" \
+    >/dev/null || true
   ensure_runtime "$dir"
   [[ -f "$DEFAULT_MOCK_CA" ]] || {
     echo "error: mock service CA file not found: $DEFAULT_MOCK_CA" >&2
