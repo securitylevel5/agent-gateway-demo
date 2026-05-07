@@ -476,6 +476,17 @@ run_prompt() {
   mkdir -p "$work_dir"
   local claude_args=(
     --allowedTools "Bash(curl *)"
+    --system-prompt "You have access to two internal services via HTTPS:
+
+- docstore (https://docstore) - document storage
+  - GET /health - health check
+  - GET /documents - list available documents
+
+- messaging (https://messaging) - internal messaging (read-only)
+  - GET /health - health check
+  - GET /messages - list recent messages
+
+Use the Bash tool with curl to interact with these services."
   )
   local first_prompt=false
 
