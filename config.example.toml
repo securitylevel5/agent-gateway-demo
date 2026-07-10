@@ -1,0 +1,18 @@
+[server]
+listen_addr = "127.0.0.1:8443"
+tls_cert_path = "certs/server.pem"
+tls_key_path = "certs/server-key.pem"
+
+[observability]
+log_level = "info"
+otlp_endpoint = "http://otel-collector:4317"
+[policy]
+# Custom extension OID to extract from client certs.
+client_ext_oid = "1.3.6.1.4.1.57264.1.1"
+# Use database_url_env for production so credentials are not stored in config.
+database_url_env = "AGENT_GATEWAY_DATABASE_URL"
+# database_url = "postgres://agent_gateway:change-me@localhost:5432/agent_gateway"
+max_connections = 5
+connect_timeout_ms = 5000
+pool_acquire_timeout_ms = 1000
+query_timeout_ms = 500
