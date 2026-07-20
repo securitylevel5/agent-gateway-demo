@@ -256,7 +256,7 @@ fn load_persistent_key(ctx: &mut Context, handle: u32) -> anyhow::Result<KeyHand
     let loaded = ctx
         .tr_from_tpm_public(persistent.into())
         .with_context(|| format!("loading persistent TPM handle 0x{handle:08x}"))?;
-    KeyHandle::try_from(loaded).context("converting TPM handle to key handle")
+    Ok(KeyHandle::from(loaded))
 }
 
 fn certificate_spki(cert: &CertificateDer<'_>) -> anyhow::Result<Vec<u8>> {
