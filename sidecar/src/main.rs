@@ -2,8 +2,6 @@ mod bridge;
 mod identity;
 mod observability;
 
-use std::fs::File;
-use std::io::BufReader;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,6 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, ensure};
 use clap::Parser;
 use rustls::ClientConfig;
+use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, ServerName};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
@@ -189,9 +188,9 @@ fn build_client_config(
 }
 
 fn load_certs(path: &Path) -> anyhow::Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
+    let certs = CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("opening {}", path.display()))?
+        .collect::<Result<Vec<_>, _>>()?;
     ensure!(!certs.is_empty(), "no certificates in {}", path.display());
     Ok(certs)
 }
