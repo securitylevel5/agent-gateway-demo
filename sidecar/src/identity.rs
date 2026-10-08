@@ -7,6 +7,7 @@ use anyhow::{Context as AnyhowContext, ensure};
 use rustls::client::ResolvesClientCert;
 use rustls::sign::{CertifiedKey, Signer, SigningKey};
 use rustls::{Error as RustlsError, SignatureAlgorithm, SignatureScheme};
+use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, SubjectPublicKeyInfoDer};
 use sha2::{Digest as ShaDigest, Sha256};
 use tss_esapi::constants::tss::{TPM2_RH_NULL, TPM2_ST_HASHCHECK};
@@ -452,9 +453,9 @@ fn der_len(len: usize) -> Vec<u8> {
 }
 
 fn load_certs(path: &Path) -> anyhow::Result<Vec<CertificateDer<'static>>> {
-    let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let mut reader = std::io::BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
+    let certs = CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("opening {}", path.display()))?
+        .collect::<Result<Vec<_>, _>>()?;
     ensure!(!certs.is_empty(), "no certificates in {}", path.display());
     Ok(certs)
 }
